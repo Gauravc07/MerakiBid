@@ -11,7 +11,9 @@
     "update-times": "node scripts/update-event-times.js",
     "start-event": "node scripts/start-event-now.js",
     "extend-event": "node scripts/extend-event.js",
-    "verify": "node scripts/verify-setup.js"
+    "verify": "node scripts/verify-setup.js",
+    "check-production": "bash scripts/check-production.sh",
+    "build-clean": "npm run build && npm run check-production"
   },
   "dependencies": {
     "@radix-ui/react-accordion": "^1.1.2",
@@ -27,7 +29,6 @@
     "clsx": "^2.1.1",
     "lucide-react": "^0.263.1",
     "next": "^14.2.16",
-    "next-themes": "^0.2.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "tailwind-merge": "^2.5.4",
@@ -44,5 +45,9 @@
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.15",
     "typescript": "^5.6.3"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=8.0.0"
   }
 }
