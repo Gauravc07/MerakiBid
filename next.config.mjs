@@ -18,8 +18,6 @@ const nextConfig = {
   experimental: {
     serverComponentsExternalPackages: ['bcryptjs'],
   },
-  // Ensure proper build output
-  output: 'standalone',
 }
 
 export default nextConfig
