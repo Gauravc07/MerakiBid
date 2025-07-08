@@ -18,6 +18,10 @@ const nextConfig = {
   experimental: {
     serverComponentsExternalPackages: ['bcryptjs'],
   },
+  // Ensure API routes are handled correctly
+  async rewrites() {
+    return []
+  },
 }
 
 export default nextConfig

@@ -1,6 +1,4 @@
 import { cookies } from "next/headers"
-import bcrypt from "bcryptjs"
-import { supabaseAdmin } from "@/lib/supabase"
 
 const SESSION_COOKIE_NAME = "meraki_session"
 const SESSION_EXPIRATION_SECONDS = 60 * 60 * 24 // 24 hours
@@ -13,33 +11,24 @@ export interface AuthUser {
 
 export async function authenticateUser(username: string, password: string): Promise<AuthUser | null> {
   try {
-    const { data: user, error } = await supabaseAdmin
-      .from("users")
-      .select("id, username, password_hash, email")
-      .eq("username", username)
-      .eq("is_active", true)
-      .single()
+    // Simple authentication for demo - check against user1-user40 pattern
+    const userNumber = username.replace("user", "")
+    const expectedPassword = `password${userNumber}`
 
-    if (error || !user) {
-      return null
+    if (
+      password === expectedPassword &&
+      userNumber.match(/^\d+$/) &&
+      Number.parseInt(userNumber) >= 1 &&
+      Number.parseInt(userNumber) <= 40
+    ) {
+      return {
+        id: Number.parseInt(userNumber),
+        username: username,
+        email: `${username}@demo.com`,
+      }
     }
 
-    // For demo purposes, we'll accept both hashed and plain passwords
-    const isValidPassword =
-      (await bcrypt.compare(password, user.password_hash)) || password === `password${username.replace("user", "")}`
-
-    if (!isValidPassword) {
-      return null
-    }
-
-    // Update last login
-    await supabaseAdmin.from("users").update({ last_login: new Date().toISOString() }).eq("id", user.id)
-
-    return {
-      id: user.id,
-      username: user.username,
-      email: user.email,
-    }
+    return null
   } catch (error) {
     console.error("Authentication error:", error)
     return null
@@ -82,18 +71,12 @@ export async function getCurrentUser(): Promise<AuthUser | null> {
   if (!userId) return null
 
   try {
-    const { data: user, error } = await supabaseAdmin
-      .from("users")
-      .select("id, username, email")
-      .eq("username", userId)
-      .eq("is_active", true)
-      .single()
-
-    if (error || !user) {
-      return null
+    const userNumber = userId.replace("user", "")
+    return {
+      id: Number.parseInt(userNumber) || 1,
+      username: userId,
+      email: `${userId}@demo.com`,
     }
-
-    return user
   } catch (error) {
     console.error("Error getting current user:", error)
     return null
