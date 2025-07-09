@@ -6,8 +6,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { useRealtimeBidding } from "@/hooks/use-realtime-bidding"
-import { Loader2, RefreshCw, AlertCircle } from "lucide-react"
+import { useEnhancedRealtimeBidding } from "@/hooks/use-enhanced-realtime-bidding"
+import { Loader2, RefreshCw, AlertCircle, Wifi, WifiOff } from "lucide-react"
 import BiddingTimeStatus from "./bidding-time-status"
 import BidLoadingOverlay from "./bid-loading-overlay"
 import DynamicSeatingChart from "./dynamic-seating-chart"
@@ -17,7 +17,7 @@ interface ProductionBiddingTableProps {
 }
 
 export default function ProductionBiddingTable({ currentUser = "user1" }: ProductionBiddingTableProps) {
-  const { tables, recentBids, loading, error, placeBid, refetch } = useRealtimeBidding()
+  const { tables, recentBids, loading, error, connectionStatus, placeBid, refetch } = useEnhancedRealtimeBidding()
   const [selectedTable, setSelectedTable] = useState<string | null>(null)
   const [hoveredTable, setHoveredTable] = useState<string | null>(null)
   const [customBid, setCustomBid] = useState<string>("")
@@ -84,7 +84,7 @@ export default function ProductionBiddingTable({ currentUser = "user1" }: Produc
     setIsPlacingBid(true)
     setLastBidPlaced(tableId)
 
-    console.log("Placing bid:", {
+    console.log("🎯 Placing bid:", {
       tableId,
       bidAmount,
       currentBid: table.current_bid,
@@ -100,28 +100,12 @@ export default function ProductionBiddingTable({ currentUser = "user1" }: Produc
         new Promise((resolve) => setTimeout(resolve, 2000)), // Minimum 2 seconds to show animation
       ])
 
-      console.log("Bid result:", result)
+      console.log("📤 Bid result:", result)
 
       if (result.success) {
         setBidSuccess(`Successfully placed bid of ₹${bidAmount.toLocaleString()} on ${table.name}!`)
         setSelectedTable(null)
         setCustomBid("")
-
-        // Force multiple refreshes to ensure UI updates
-        setTimeout(() => {
-          console.log("First refresh after bid...")
-          refetch()
-        }, 500)
-
-        setTimeout(() => {
-          console.log("Second refresh after bid...")
-          refetch()
-        }, 2000)
-
-        setTimeout(() => {
-          console.log("Third refresh after bid...")
-          refetch()
-        }, 4000)
 
         // Clear success message after 5 seconds
         setTimeout(() => {
@@ -131,7 +115,7 @@ export default function ProductionBiddingTable({ currentUser = "user1" }: Produc
         setBidError(result.error || "Failed to place bid")
       }
     } catch (error) {
-      console.error("Error placing bid:", error)
+      console.error("💥 Error placing bid:", error)
       setBidError("An unexpected error occurred. Please try again.")
     } finally {
       setIsPlacingBid(false)
@@ -140,7 +124,7 @@ export default function ProductionBiddingTable({ currentUser = "user1" }: Produc
   }
 
   const handleRetryBid = (tableId: string) => {
-    console.log("Retrying bid for table:", tableId)
+    console.log("🔄 Retrying bid for table:", tableId)
     clearBidState()
     // Don't clear the custom bid amount, let user adjust it
     handlePlaceBid(tableId)
@@ -161,6 +145,28 @@ export default function ProductionBiddingTable({ currentUser = "user1" }: Produc
     }
   }
 
+  const getConnectionIcon = () => {
+    switch (connectionStatus) {
+      case "connected":
+        return <Wifi className="h-4 w-4 text-green-500" />
+      case "connecting":
+        return <Loader2 className="h-4 w-4 animate-spin text-yellow-500" />
+      case "disconnected":
+        return <WifiOff className="h-4 w-4 text-red-500" />
+    }
+  }
+
+  const getConnectionText = () => {
+    switch (connectionStatus) {
+      case "connected":
+        return "Connected"
+      case "connecting":
+        return "Connecting..."
+      case "disconnected":
+        return "Disconnected"
+    }
+  }
+
   // Clear bid error and success when selection changes
   useEffect(() => {
     clearBidState()
@@ -177,7 +183,7 @@ export default function ProductionBiddingTable({ currentUser = "user1" }: Produc
 
   // Manual refresh function
   const handleManualRefresh = () => {
-    console.log("Manual refresh triggered")
+    console.log("🔄 Manual refresh triggered")
     refetch()
     setLastRefresh(new Date())
   }
@@ -212,12 +218,28 @@ export default function ProductionBiddingTable({ currentUser = "user1" }: Produc
           <div className="text-center space-y-4 mb-8">
             <h2 className="font-serif text-4xl md:text-5xl font-bold text-gold-gradient">Live Bidding Section</h2>
 
-            {/* Auto-refresh indicator with manual refresh button */}
-            <div className="flex items-center justify-center gap-4 text-sm text-yellow-400">
+            {/* Enhanced connection status and refresh controls */}
+            <div className="flex items-center justify-center gap-6 text-sm">
               <div className="flex items-center gap-2">
-                <RefreshCw className="h-4 w-4 animate-spin" />
-                <span>Auto-refreshing every 2s • Last update: {lastRefresh.toLocaleTimeString()}</span>
+                {getConnectionIcon()}
+                <span
+                  className={`font-medium ${
+                    connectionStatus === "connected"
+                      ? "text-green-400"
+                      : connectionStatus === "connecting"
+                        ? "text-yellow-400"
+                        : "text-red-400"
+                  }`}
+                >
+                  {getConnectionText()}
+                </span>
               </div>
+
+              <div className="flex items-center gap-2 text-yellow-400">
+                <RefreshCw className="h-4 w-4 animate-spin" />
+                <span>Auto-sync every 3s • Last: {lastRefresh.toLocaleTimeString()}</span>
+              </div>
+
               <Button
                 onClick={handleManualRefresh}
                 variant="outline"
@@ -225,7 +247,7 @@ export default function ProductionBiddingTable({ currentUser = "user1" }: Produc
                 className="border-yellow-500 text-yellow-400 hover:bg-yellow-500 hover:text-black bg-transparent"
               >
                 <RefreshCw className="h-4 w-4 mr-1" />
-                Refresh Now
+                Sync Now
               </Button>
             </div>
           </div>
@@ -267,7 +289,15 @@ export default function ProductionBiddingTable({ currentUser = "user1" }: Produc
                   <CardHeader>
                     <CardTitle className="text-platinum-gradient flex items-center gap-2">
                       Available Tables ({tables.length})
-                      <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                      <div
+                        className={`w-2 h-2 rounded-full animate-pulse ${
+                          connectionStatus === "connected"
+                            ? "bg-green-500"
+                            : connectionStatus === "connecting"
+                              ? "bg-yellow-500"
+                              : "bg-red-500"
+                        }`}
+                      ></div>
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="max-h-[500px] overflow-y-auto space-y-3">
@@ -307,7 +337,7 @@ export default function ProductionBiddingTable({ currentUser = "user1" }: Produc
                                 Updated: {new Date(table.updated_at || Date.now()).toLocaleTimeString()}
                               </p>
                               <p className="text-xs text-blue-400">
-                                Version: {table.version || 1} • Bids: {table.bid_count || 0}
+                                v{table.version || 1} • {table.bid_count || 0} bids
                               </p>
                             </div>
                             {isUserWinning && (

@@ -29,6 +29,7 @@ export function useEnhancedRealtimeBidding() {
       const response = await fetch(url, {
         headers: {
           "Cache-Control": "no-cache",
+          "X-Timestamp": Date.now().toString(),
         },
       })
 
@@ -50,6 +51,7 @@ export function useEnhancedRealtimeBidding() {
     try {
       const data = await fetchWithRetry("/api/tables")
       if (data.tables) {
+        console.log("📊 Fetched tables:", data.tables.length)
         setTables(data.tables)
       }
     } catch (err) {
@@ -62,6 +64,7 @@ export function useEnhancedRealtimeBidding() {
     try {
       const data = await fetchWithRetry("/api/bids")
       if (data.bids) {
+        console.log("🎯 Fetched bids:", data.bids.length)
         setRecentBids(data.bids)
       }
     } catch (err) {
@@ -74,7 +77,7 @@ export function useEnhancedRealtimeBidding() {
     Promise.all([fetchTables(), fetchRecentBids()]).finally(() => setLoading(false))
   }, [fetchTables, fetchRecentBids])
 
-  // Enhanced real-time subscriptions with reconnection logic
+  // Enhanced real-time subscriptions with immediate local updates
   useEffect(() => {
     let tablesChannel: any
     let bidsChannel: any
@@ -82,9 +85,14 @@ export function useEnhancedRealtimeBidding() {
     const maxReconnectAttempts = 5
 
     const setupSubscriptions = () => {
+      if (!supabase) {
+        console.warn("⚠️ Supabase not available for real-time")
+        return
+      }
+
       setConnectionStatus("connecting")
 
-      // Subscribe to table updates
+      // Subscribe to table updates with immediate UI updates
       tablesChannel = supabase
         .channel("tables-changes")
         .on(
@@ -95,10 +103,22 @@ export function useEnhancedRealtimeBidding() {
             table: "tables",
           },
           (payload) => {
-            console.log("Table updated:", payload.new)
+            console.log("🔄 Real-time table update:", payload.new)
+
+            // Immediately update the table in state
             setTables((prev) =>
-              prev.map((table) => (table.id === payload.new.id ? { ...table, ...payload.new } : table)),
+              prev.map((table) =>
+                table.id === payload.new.id
+                  ? { ...table, ...payload.new, updated_at: new Date().toISOString() }
+                  : table,
+              ),
             )
+
+            // Force a fresh fetch after a short delay to ensure consistency
+            setTimeout(() => {
+              console.log("🔄 Refreshing after real-time update...")
+              fetchTables()
+            }, 1000)
           },
         )
         .on("system", {}, (payload) => {
@@ -108,14 +128,14 @@ export function useEnhancedRealtimeBidding() {
           }
         })
         .subscribe((status) => {
-          console.log("Tables subscription status:", status)
+          console.log("📡 Tables subscription status:", status)
           if (status === "SUBSCRIBED") {
             setConnectionStatus("connected")
             reconnectAttempts = 0
           }
         })
 
-      // Subscribe to new bids
+      // Subscribe to new bids with immediate table updates
       bidsChannel = supabase
         .channel("bids-changes")
         .on(
@@ -126,8 +146,35 @@ export function useEnhancedRealtimeBidding() {
             table: "bids",
           },
           (payload) => {
-            console.log("New bid:", payload.new)
-            setRecentBids((prev) => [payload.new as Bid, ...prev.slice(0, 49)])
+            console.log("🎯 Real-time new bid:", payload.new)
+            const newBid = payload.new as Bid
+
+            // Immediately add to recent bids
+            setRecentBids((prev) => [newBid, ...prev.slice(0, 49)])
+
+            // Immediately update the corresponding table if it's a winning bid
+            if (newBid.is_winning) {
+              setTables((prev) =>
+                prev.map((table) =>
+                  table.id === newBid.table_id
+                    ? {
+                        ...table,
+                        current_bid: newBid.bid_amount,
+                        highest_bidder_username: newBid.username,
+                        bid_count: (table.bid_count || 0) + 1,
+                        version: (table.version || 1) + 1,
+                        updated_at: new Date().toISOString(),
+                      }
+                    : table,
+                ),
+              )
+            }
+
+            // Force refresh tables after a short delay
+            setTimeout(() => {
+              console.log("🔄 Refreshing tables after new bid...")
+              fetchTables()
+            }, 500)
           },
         )
         .on("system", {}, (payload) => {
@@ -137,14 +184,14 @@ export function useEnhancedRealtimeBidding() {
           }
         })
         .subscribe((status) => {
-          console.log("Bids subscription status:", status)
+          console.log("📡 Bids subscription status:", status)
         })
     }
 
     const handleReconnect = () => {
       if (reconnectAttempts < maxReconnectAttempts) {
         reconnectAttempts++
-        console.log(`Attempting to reconnect... (${reconnectAttempts}/${maxReconnectAttempts})`)
+        console.log(`🔄 Attempting to reconnect... (${reconnectAttempts}/${maxReconnectAttempts})`)
 
         retryTimeoutRef.current = setTimeout(() => {
           cleanup()
@@ -155,10 +202,10 @@ export function useEnhancedRealtimeBidding() {
 
     const cleanup = () => {
       if (tablesChannel) {
-        supabase.removeChannel(tablesChannel)
+        supabase?.removeChannel(tablesChannel)
       }
       if (bidsChannel) {
-        supabase.removeChannel(bidsChannel)
+        supabase?.removeChannel(bidsChannel)
       }
       if (retryTimeoutRef.current) {
         clearTimeout(retryTimeoutRef.current)
@@ -180,7 +227,18 @@ export function useEnhancedRealtimeBidding() {
       cleanup()
       document.removeEventListener("visibilitychange", handleVisibilityChange)
     }
-  }, [connectionStatus])
+  }, [connectionStatus, fetchTables])
+
+  // Aggressive polling for production environment
+  useEffect(() => {
+    const interval = setInterval(() => {
+      console.log("⏰ Aggressive polling refresh...")
+      fetchTables()
+      fetchRecentBids()
+    }, 3000) // Every 3 seconds for production
+
+    return () => clearInterval(interval)
+  }, [fetchTables, fetchRecentBids])
 
   const placeBid = useCallback(
     async (tableId: string, bidAmount: number): Promise<BidResult> => {
@@ -188,11 +246,30 @@ export function useEnhancedRealtimeBidding() {
         const table = tables.find((t) => t.id === tableId)
         const expectedVersion = table?.version
 
+        console.log("🎯 Placing bid:", { tableId, bidAmount, expectedVersion })
+
+        // Optimistically update the UI immediately
+        setTables((prev) =>
+          prev.map((t) =>
+            t.id === tableId
+              ? {
+                  ...t,
+                  current_bid: bidAmount,
+                  highest_bidder_username: "You",
+                  bid_count: (t.bid_count || 0) + 1,
+                  version: (t.version || 1) + 1,
+                  updated_at: new Date().toISOString(),
+                }
+              : t,
+          ),
+        )
+
         const response = await fetch("/api/bids", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             "X-Session-ID": `${Date.now()}-${Math.random()}`,
+            "X-Timestamp": Date.now().toString(),
           },
           body: JSON.stringify({
             table_id: tableId,
@@ -202,8 +279,13 @@ export function useEnhancedRealtimeBidding() {
         })
 
         const data = await response.json()
+        console.log("📤 Bid response:", data)
 
         if (!response.ok) {
+          // Revert optimistic update on failure
+          console.log("❌ Bid failed, reverting optimistic update")
+          fetchTables() // Refresh to get correct state
+
           return {
             success: false,
             error: data.error || "Failed to place bid",
@@ -214,8 +296,18 @@ export function useEnhancedRealtimeBidding() {
           }
         }
 
+        // Force multiple refreshes to ensure all users see the update
+        setTimeout(() => fetchTables(), 200)
+        setTimeout(() => fetchTables(), 1000)
+        setTimeout(() => fetchTables(), 3000)
+        setTimeout(() => fetchRecentBids(), 500)
+
         return { success: true, ...data }
       } catch (err) {
+        console.error("💥 Bid error:", err)
+        // Revert optimistic update on error
+        fetchTables()
+
         const errorMessage = err instanceof Error ? err.message : "Network error"
         return {
           success: false,
@@ -224,7 +316,7 @@ export function useEnhancedRealtimeBidding() {
         }
       }
     },
-    [tables],
+    [tables, fetchTables, fetchRecentBids],
   )
 
   const refetch = useCallback(() => {

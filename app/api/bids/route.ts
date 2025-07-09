@@ -69,7 +69,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(mockResult)
     }
 
-    console.log("Placing bid via database function:", {
+    console.log("🎯 Placing bid via database function:", {
       table_id,
       user_id: user.id,
       username: user.username,
@@ -90,11 +90,11 @@ export async function POST(request: NextRequest) {
     })
 
     if (error) {
-      console.error("Error placing bid:", error)
+      console.error("❌ Error placing bid:", error)
       return NextResponse.json({ error: "Failed to place bid" }, { status: 500 })
     }
 
-    console.log("Database function result:", result)
+    console.log("✅ Database function result:", result)
 
     if (!result.success) {
       return NextResponse.json(
@@ -109,7 +109,23 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    console.log("Bid placed successfully:", result)
+    console.log("🎉 Bid placed successfully:", result)
+
+    // Trigger immediate real-time notification by updating the table
+    // This ensures all connected clients get the update immediately
+    try {
+      await supabaseAdmin
+        .from("tables")
+        .update({
+          updated_at: new Date().toISOString(),
+          version: result.new_version,
+        })
+        .eq("id", table_id)
+
+      console.log("📡 Triggered real-time update for table:", table_id)
+    } catch (updateError) {
+      console.warn("⚠️ Failed to trigger real-time update:", updateError)
+    }
 
     // Return enhanced response with user info
     return NextResponse.json({
@@ -124,7 +140,7 @@ export async function POST(request: NextRequest) {
       timestamp: new Date().toISOString(),
     })
   } catch (error) {
-    console.error("Unexpected error:", error)
+    console.error("💥 Unexpected error:", error)
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })
   }
 }
