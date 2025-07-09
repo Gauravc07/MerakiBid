@@ -161,7 +161,7 @@ export default function ProductionBiddingTable({ currentUser = "user1" }: Produc
       case "connected":
         return "Connected"
       case "connecting":
-        return "Connecting..."
+        return "Connected"
       case "disconnected":
         return "Disconnected"
     }
