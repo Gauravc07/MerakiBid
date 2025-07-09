@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { supabase, type Table, type Bid } from "@/lib/supabase"
 
 export function useRealtimeBidding() {
@@ -15,18 +15,20 @@ export function useRealtimeBidding() {
     fetchRecentBids()
   }, [])
 
-  // Auto-refresh every 1.5 seconds
+  // Auto-refresh every 2 seconds for more responsive updates
   useEffect(() => {
     const interval = setInterval(() => {
       fetchTables()
       fetchRecentBids()
-    }, 1500) // 1.5 seconds
+    }, 2000) // Increased to 2 seconds to reduce server load
 
     return () => clearInterval(interval)
   }, [])
 
   // Set up real-time subscriptions
   useEffect(() => {
+    if (!supabase) return
+
     // Subscribe to table updates
     const tablesSubscription = supabase
       .channel("tables-changes")
@@ -38,6 +40,7 @@ export function useRealtimeBidding() {
           table: "tables",
         },
         (payload) => {
+          console.log("Real-time table update:", payload.new)
           setTables((prev) => prev.map((table) => (table.id === payload.new.id ? { ...table, ...payload.new } : table)))
         },
       )
@@ -54,7 +57,10 @@ export function useRealtimeBidding() {
           table: "bids",
         },
         (payload) => {
+          console.log("Real-time new bid:", payload.new)
           setRecentBids((prev) => [payload.new as Bid, ...prev.slice(0, 19)])
+          // Force refresh tables when new bid comes in
+          setTimeout(() => fetchTables(), 500)
         },
       )
       .subscribe()
@@ -65,51 +71,73 @@ export function useRealtimeBidding() {
     }
   }, [])
 
-  const fetchTables = async () => {
+  const fetchTables = useCallback(async () => {
     try {
       const response = await fetch("/api/tables", {
         cache: "no-store",
         headers: {
           "Cache-Control": "no-cache",
+          Pragma: "no-cache",
+          "X-Timestamp": Date.now().toString(),
         },
       })
-      const data = await response.json()
 
-      if (data.tables) {
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+
+      const data = await response.json()
+      console.log("Fetched tables data:", data)
+
+      if (data.tables && Array.isArray(data.tables)) {
         setTables(data.tables)
+        setError(null)
+      } else {
+        console.warn("Invalid tables data:", data)
       }
     } catch (err) {
-      setError("Failed to fetch tables")
       console.error("Error fetching tables:", err)
+      setError("Failed to fetch tables")
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
-  const fetchRecentBids = async () => {
+  const fetchRecentBids = useCallback(async () => {
     try {
       const response = await fetch("/api/bids", {
         cache: "no-store",
         headers: {
           "Cache-Control": "no-cache",
+          Pragma: "no-cache",
+          "X-Timestamp": Date.now().toString(),
         },
       })
-      const data = await response.json()
 
-      if (data.bids) {
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+
+      const data = await response.json()
+      console.log("Fetched bids data:", data)
+
+      if (data.bids && Array.isArray(data.bids)) {
         setRecentBids(data.bids)
       }
     } catch (err) {
       console.error("Error fetching bids:", err)
     }
-  }
+  }, [])
 
   const placeBid = async (tableId: string, bidAmount: number) => {
     try {
+      console.log("Placing bid:", { tableId, bidAmount })
+
       const response = await fetch("/api/bids", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          "X-Timestamp": Date.now().toString(),
         },
         body: JSON.stringify({
           table_id: tableId,
@@ -118,21 +146,53 @@ export function useRealtimeBidding() {
       })
 
       const data = await response.json()
+      console.log("Bid response:", data)
 
       if (!response.ok) {
         throw new Error(data.error || "Failed to place bid")
       }
 
-      // Immediately refresh data after successful bid
-      await Promise.all([fetchTables(), fetchRecentBids()])
+      // Immediately update the local table state with the new bid
+      setTables((prevTables) =>
+        prevTables.map((table) =>
+          table.id === tableId
+            ? {
+                ...table,
+                current_bid: bidAmount,
+                highest_bidder_username: data.username || "You",
+                bid_count: (table.bid_count || 0) + 1,
+                version: (table.version || 1) + 1,
+                updated_at: new Date().toISOString(),
+              }
+            : table,
+        ),
+      )
+
+      // Force refresh data after successful bid
+      setTimeout(() => {
+        fetchTables()
+        fetchRecentBids()
+      }, 1000)
+
+      // Additional refresh after 3 seconds to ensure consistency
+      setTimeout(() => {
+        fetchTables()
+      }, 3000)
 
       return { success: true, data }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "Failed to place bid"
+      console.error("Bid error:", errorMessage)
       setError(errorMessage)
       return { success: false, error: errorMessage }
     }
   }
+
+  const forceRefresh = useCallback(() => {
+    console.log("Force refreshing all data...")
+    fetchTables()
+    fetchRecentBids()
+  }, [fetchTables, fetchRecentBids])
 
   return {
     tables,
@@ -140,9 +200,6 @@ export function useRealtimeBidding() {
     loading,
     error,
     placeBid,
-    refetch: () => {
-      fetchTables()
-      fetchRecentBids()
-    },
+    refetch: forceRefresh,
   }
 }

@@ -24,6 +24,7 @@ export default function ProductionBiddingTable({ currentUser = "user1" }: Produc
   const [bidError, setBidError] = useState<string>("")
   const [isPlacingBid, setIsPlacingBid] = useState(false)
   const [lastRefresh, setLastRefresh] = useState(new Date())
+  const [lastBidPlaced, setLastBidPlaced] = useState<string | null>(null)
 
   // Update last refresh time every 1 second to show activity
   useEffect(() => {
@@ -73,6 +74,7 @@ export default function ProductionBiddingTable({ currentUser = "user1" }: Produc
 
     setIsPlacingBid(true)
     setBidError("")
+    setLastBidPlaced(tableId)
 
     console.log("Placing bid:", {
       tableId,
@@ -95,10 +97,22 @@ export default function ProductionBiddingTable({ currentUser = "user1" }: Produc
       if (result.success) {
         setSelectedTable(null)
         setCustomBid("")
-        // Force an additional refresh to ensure UI updates
+
+        // Force multiple refreshes to ensure UI updates
         setTimeout(() => {
+          console.log("First refresh after bid...")
           refetch()
         }, 500)
+
+        setTimeout(() => {
+          console.log("Second refresh after bid...")
+          refetch()
+        }, 2000)
+
+        setTimeout(() => {
+          console.log("Third refresh after bid...")
+          refetch()
+        }, 4000)
       } else {
         setBidError(result.error || "Failed to place bid")
       }
@@ -107,6 +121,7 @@ export default function ProductionBiddingTable({ currentUser = "user1" }: Produc
       setBidError("An unexpected error occurred")
     } finally {
       setIsPlacingBid(false)
+      setLastBidPlaced(null)
     }
   }
 
@@ -180,7 +195,7 @@ export default function ProductionBiddingTable({ currentUser = "user1" }: Produc
             <div className="flex items-center justify-center gap-4 text-sm text-yellow-400">
               <div className="flex items-center gap-2">
                 <RefreshCw className="h-4 w-4 animate-spin" />
-                <span>Auto-refreshing every 1s • Last update: {lastRefresh.toLocaleTimeString()}</span>
+                <span>Auto-refreshing every 2s • Last update: {lastRefresh.toLocaleTimeString()}</span>
               </div>
               <Button
                 onClick={handleManualRefresh}
@@ -231,6 +246,7 @@ export default function ProductionBiddingTable({ currentUser = "user1" }: Produc
                     {tables.map((table) => {
                       const minimumBid = table.current_bid + 1000
                       const isUserWinning = table.highest_bidder_username === currentUser
+                      const wasJustBid = lastBidPlaced === table.id
 
                       return (
                         <div
@@ -239,7 +255,9 @@ export default function ProductionBiddingTable({ currentUser = "user1" }: Produc
                             selectedTable === table.id
                               ? "border-yellow-500 bg-yellow-500/10"
                               : "border-black-charcoal bg-background hover:border-yellow-500/50"
-                          } ${isUserWinning ? "ring-2 ring-green-400" : ""}`}
+                          } ${isUserWinning ? "ring-2 ring-green-400" : ""} ${
+                            wasJustBid ? "ring-2 ring-blue-400 animate-pulse" : ""
+                          }`}
                           onClick={() => setSelectedTable(table.id)}
                         >
                           <div className="flex justify-between items-start mb-2">
@@ -259,6 +277,9 @@ export default function ProductionBiddingTable({ currentUser = "user1" }: Produc
                               <p className="text-xs text-green-400">Min. next bid: ₹{minimumBid.toLocaleString()}</p>
                               <p className="text-xs text-gray-400">
                                 Updated: {new Date(table.updated_at || Date.now()).toLocaleTimeString()}
+                              </p>
+                              <p className="text-xs text-blue-400">
+                                Version: {table.version || 1} • Bids: {table.bid_count || 0}
                               </p>
                             </div>
                             {isUserWinning && (
