@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useRealtimeBidding } from "@/hooks/use-realtime-bidding"
-import { Loader2, RefreshCw } from "lucide-react"
+import { Loader2, RefreshCw, AlertCircle } from "lucide-react"
 import BiddingTimeStatus from "./bidding-time-status"
 import BidLoadingOverlay from "./bid-loading-overlay"
 import DynamicSeatingChart from "./dynamic-seating-chart"
@@ -25,6 +25,7 @@ export default function ProductionBiddingTable({ currentUser = "user1" }: Produc
   const [isPlacingBid, setIsPlacingBid] = useState(false)
   const [lastRefresh, setLastRefresh] = useState(new Date())
   const [lastBidPlaced, setLastBidPlaced] = useState<string | null>(null)
+  const [bidSuccess, setBidSuccess] = useState<string>("")
 
   // Update last refresh time every 1 second to show activity
   useEffect(() => {
@@ -35,6 +36,11 @@ export default function ProductionBiddingTable({ currentUser = "user1" }: Produc
     return () => clearInterval(interval)
   }, [])
 
+  const clearBidState = () => {
+    setBidError("")
+    setBidSuccess("")
+  }
+
   const handlePlaceBid = async (tableId: string) => {
     const table = tables.find((t) => t.id === tableId)
     if (!table) {
@@ -44,6 +50,9 @@ export default function ProductionBiddingTable({ currentUser = "user1" }: Produc
 
     const bidAmount = Number.parseInt(customBid)
     const minimumBid = table.current_bid + 1000
+
+    // Clear previous states
+    clearBidState()
 
     // Enhanced validation
     if (!customBid || customBid.trim() === "") {
@@ -73,7 +82,6 @@ export default function ProductionBiddingTable({ currentUser = "user1" }: Produc
     }
 
     setIsPlacingBid(true)
-    setBidError("")
     setLastBidPlaced(tableId)
 
     console.log("Placing bid:", {
@@ -95,6 +103,7 @@ export default function ProductionBiddingTable({ currentUser = "user1" }: Produc
       console.log("Bid result:", result)
 
       if (result.success) {
+        setBidSuccess(`Successfully placed bid of ₹${bidAmount.toLocaleString()} on ${table.name}!`)
         setSelectedTable(null)
         setCustomBid("")
 
@@ -113,16 +122,28 @@ export default function ProductionBiddingTable({ currentUser = "user1" }: Produc
           console.log("Third refresh after bid...")
           refetch()
         }, 4000)
+
+        // Clear success message after 5 seconds
+        setTimeout(() => {
+          setBidSuccess("")
+        }, 5000)
       } else {
         setBidError(result.error || "Failed to place bid")
       }
     } catch (error) {
       console.error("Error placing bid:", error)
-      setBidError("An unexpected error occurred")
+      setBidError("An unexpected error occurred. Please try again.")
     } finally {
       setIsPlacingBid(false)
       setLastBidPlaced(null)
     }
+  }
+
+  const handleRetryBid = (tableId: string) => {
+    console.log("Retrying bid for table:", tableId)
+    clearBidState()
+    // Don't clear the custom bid amount, let user adjust it
+    handlePlaceBid(tableId)
   }
 
   const getCategoryColor = (category: string) => {
@@ -140,19 +161,19 @@ export default function ProductionBiddingTable({ currentUser = "user1" }: Produc
     }
   }
 
-  // Clear bid error when selection changes
+  // Clear bid error and success when selection changes
   useEffect(() => {
-    setBidError("")
+    clearBidState()
     setCustomBid("")
   }, [selectedTable])
 
-  // Don't auto-populate minimum bid - let user enter custom amount
-  // Just clear the field when table selection changes
-  useEffect(() => {
-    if (selectedTable) {
-      setCustomBid("") // Clear field instead of auto-populating
+  // Clear error when user starts typing
+  const handleBidInputChange = (value: string) => {
+    setCustomBid(value)
+    if (bidError) {
+      setBidError("") // Clear error when user starts typing
     }
-  }, [selectedTable])
+  }
 
   // Manual refresh function
   const handleManualRefresh = () => {
@@ -208,6 +229,13 @@ export default function ProductionBiddingTable({ currentUser = "user1" }: Produc
               </Button>
             </div>
           </div>
+
+          {/* Success Message */}
+          {bidSuccess && (
+            <div className="mb-6 p-4 bg-green-500/20 border border-green-500 rounded-lg text-center">
+              <p className="text-green-400 font-semibold">{bidSuccess}</p>
+            </div>
+          )}
 
           {/* Add this new time status component */}
           <BiddingTimeStatus tables={tables} />
@@ -300,13 +328,10 @@ export default function ProductionBiddingTable({ currentUser = "user1" }: Produc
                                   type="number"
                                   placeholder={`Enter amount (min ${minimumBid})`}
                                   value={customBid}
-                                  onChange={(e) => {
-                                    setCustomBid(e.target.value)
-                                    setBidError("") // Clear error when user types
-                                  }}
+                                  onChange={(e) => handleBidInputChange(e.target.value)}
                                   className="bg-background border-yellow-500/50 text-foreground"
                                   min={minimumBid}
-                                  step="100" // Allow smaller increments for custom bids
+                                  step="100"
                                   disabled={isPlacingBid || isUserWinning}
                                 />
                                 <Button
@@ -329,7 +354,46 @@ export default function ProductionBiddingTable({ currentUser = "user1" }: Produc
                                   )}
                                 </Button>
                               </div>
-                              {bidError && <p className="text-red-400 text-xs">{bidError}</p>}
+
+                              {/* Enhanced Error Display with Retry Button */}
+                              {bidError && (
+                                <div className="bg-red-500/20 border border-red-500 rounded-lg p-3 space-y-2">
+                                  <div className="flex items-start gap-2">
+                                    <AlertCircle className="h-4 w-4 text-red-400 mt-0.5 flex-shrink-0" />
+                                    <div className="flex-1">
+                                      <p className="text-red-400 text-sm font-medium">Bid Failed</p>
+                                      <p className="text-red-300 text-xs">{bidError}</p>
+                                    </div>
+                                  </div>
+                                  <div className="flex gap-2">
+                                    <Button
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        handleRetryBid(table.id)
+                                      }}
+                                      size="sm"
+                                      className="bg-red-600 hover:bg-red-700 text-white"
+                                      disabled={isPlacingBid || !customBid}
+                                    >
+                                      <RefreshCw className="h-3 w-3 mr-1" />
+                                      Retry Bid
+                                    </Button>
+                                    <Button
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        clearBidState()
+                                        setCustomBid(minimumBid.toString())
+                                      }}
+                                      size="sm"
+                                      variant="outline"
+                                      className="border-yellow-500 text-yellow-400 hover:bg-yellow-500 hover:text-black"
+                                    >
+                                      Set Min Bid
+                                    </Button>
+                                  </div>
+                                </div>
+                              )}
+
                               {isUserWinning && (
                                 <p className="text-green-400 text-xs">
                                   You have the highest bid on this table. Wait for others to bid higher.

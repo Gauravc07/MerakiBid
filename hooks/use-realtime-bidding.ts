@@ -149,7 +149,14 @@ export function useRealtimeBidding() {
       console.log("Bid response:", data)
 
       if (!response.ok) {
-        throw new Error(data.error || "Failed to place bid")
+        // Return detailed error information
+        return {
+          success: false,
+          error: data.error || "Failed to place bid",
+          error_code: data.error_code,
+          current_bid: data.current_bid,
+          minimum_bid: data.minimum_bid,
+        }
       }
 
       // Immediately update the local table state with the new bid
@@ -183,8 +190,11 @@ export function useRealtimeBidding() {
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "Failed to place bid"
       console.error("Bid error:", errorMessage)
-      setError(errorMessage)
-      return { success: false, error: errorMessage }
+      return {
+        success: false,
+        error: errorMessage,
+        error_code: "NETWORK_ERROR",
+      }
     }
   }
 
