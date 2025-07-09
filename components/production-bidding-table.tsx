@@ -1,7 +1,6 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import Image from "next/image"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -11,13 +10,14 @@ import { useRealtimeBidding } from "@/hooks/use-realtime-bidding"
 import { Loader2, RefreshCw } from "lucide-react"
 import BiddingTimeStatus from "./bidding-time-status"
 import BidLoadingOverlay from "./bid-loading-overlay"
+import DynamicSeatingChart from "./dynamic-seating-chart"
 
 interface ProductionBiddingTableProps {
   currentUser?: string
 }
 
 export default function ProductionBiddingTable({ currentUser = "user1" }: ProductionBiddingTableProps) {
-  const { tables, recentBids, loading, error, placeBid } = useRealtimeBidding()
+  const { tables, recentBids, loading, error, placeBid, refetch } = useRealtimeBidding()
   const [selectedTable, setSelectedTable] = useState<string | null>(null)
   const [hoveredTable, setHoveredTable] = useState<string | null>(null)
   const [customBid, setCustomBid] = useState<string>("")
@@ -25,50 +25,89 @@ export default function ProductionBiddingTable({ currentUser = "user1" }: Produc
   const [isPlacingBid, setIsPlacingBid] = useState(false)
   const [lastRefresh, setLastRefresh] = useState(new Date())
 
-  // Update last refresh time every 1.5 seconds to show activity
+  // Update last refresh time every 1 second to show activity
   useEffect(() => {
     const interval = setInterval(() => {
       setLastRefresh(new Date())
-    }, 1500)
+    }, 1000)
 
     return () => clearInterval(interval)
   }, [])
 
   const handlePlaceBid = async (tableId: string) => {
     const table = tables.find((t) => t.id === tableId)
-    if (!table) return
+    if (!table) {
+      setBidError("Table not found")
+      return
+    }
 
     const bidAmount = Number.parseInt(customBid)
     const minimumBid = table.current_bid + 1000
 
-    // Validation
-    if (!customBid || isNaN(bidAmount)) {
-      setBidError("Please enter a valid bid amount")
+    // Enhanced validation
+    if (!customBid || customBid.trim() === "") {
+      setBidError("Please enter a bid amount")
+      return
+    }
+
+    if (isNaN(bidAmount) || bidAmount <= 0) {
+      setBidError("Please enter a valid positive number")
+      return
+    }
+
+    if (bidAmount <= table.current_bid) {
+      setBidError(`Bid must be higher than current highest bid of ₹${table.current_bid.toLocaleString()}`)
       return
     }
 
     if (bidAmount < minimumBid) {
-      setBidError(`Bid must be at least ₹${minimumBid.toLocaleString()} (₹1000 more than current bid)`)
+      setBidError(`Minimum bid is ₹${minimumBid.toLocaleString()} (₹1000 more than current highest bid)`)
+      return
+    }
+
+    // Check if user is trying to outbid themselves
+    if (table.highest_bidder_username === currentUser) {
+      setBidError("You already have the highest bid on this table")
       return
     }
 
     setIsPlacingBid(true)
     setBidError("")
 
-    // Add a minimum delay to show the animation
-    const [result] = await Promise.all([
-      placeBid(tableId, bidAmount),
-      new Promise((resolve) => setTimeout(resolve, 2000)), // Minimum 2 seconds to show animation
-    ])
+    console.log("Placing bid:", {
+      tableId,
+      bidAmount,
+      currentBid: table.current_bid,
+      minimumBid,
+      currentUser,
+      currentHighestBidder: table.highest_bidder_username,
+    })
 
-    if (result.success) {
-      setSelectedTable(null)
-      setCustomBid("")
-    } else {
-      setBidError(result.error || "Failed to place bid")
+    try {
+      // Add a minimum delay to show the animation
+      const [result] = await Promise.all([
+        placeBid(tableId, bidAmount),
+        new Promise((resolve) => setTimeout(resolve, 2000)), // Minimum 2 seconds to show animation
+      ])
+
+      console.log("Bid result:", result)
+
+      if (result.success) {
+        setSelectedTable(null)
+        setCustomBid("")
+        // Force an additional refresh to ensure UI updates
+        setTimeout(() => {
+          refetch()
+        }, 500)
+      } else {
+        setBidError(result.error || "Failed to place bid")
+      }
+    } catch (error) {
+      console.error("Error placing bid:", error)
+      setBidError("An unexpected error occurred")
+    } finally {
+      setIsPlacingBid(false)
     }
-
-    setIsPlacingBid(false)
   }
 
   const getCategoryColor = (category: string) => {
@@ -92,6 +131,21 @@ export default function ProductionBiddingTable({ currentUser = "user1" }: Produc
     setCustomBid("")
   }, [selectedTable])
 
+  // Don't auto-populate minimum bid - let user enter custom amount
+  // Just clear the field when table selection changes
+  useEffect(() => {
+    if (selectedTable) {
+      setCustomBid("") // Clear field instead of auto-populating
+    }
+  }, [selectedTable])
+
+  // Manual refresh function
+  const handleManualRefresh = () => {
+    console.log("Manual refresh triggered")
+    refetch()
+    setLastRefresh(new Date())
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
@@ -106,7 +160,7 @@ export default function ProductionBiddingTable({ currentUser = "user1" }: Produc
       <div className="flex items-center justify-center min-h-[400px]">
         <div className="text-center">
           <p className="text-red-400 mb-4">{error}</p>
-          <Button onClick={() => window.location.reload()}>Retry</Button>
+          <Button onClick={handleManualRefresh}>Retry</Button>
         </div>
       </div>
     )
@@ -122,10 +176,21 @@ export default function ProductionBiddingTable({ currentUser = "user1" }: Produc
           <div className="text-center space-y-4 mb-8">
             <h2 className="font-serif text-4xl md:text-5xl font-bold text-gold-gradient">Live Bidding Section</h2>
 
-            {/* Auto-refresh indicator */}
-            <div className="flex items-center justify-center gap-2 text-sm text-yellow-400">
-              <RefreshCw className="h-4 w-4 animate-spin" />
-              <span>Auto-refreshing every 1.5s • Last update: {lastRefresh.toLocaleTimeString()}</span>
+            {/* Auto-refresh indicator with manual refresh button */}
+            <div className="flex items-center justify-center gap-4 text-sm text-yellow-400">
+              <div className="flex items-center gap-2">
+                <RefreshCw className="h-4 w-4 animate-spin" />
+                <span>Auto-refreshing every 1s • Last update: {lastRefresh.toLocaleTimeString()}</span>
+              </div>
+              <Button
+                onClick={handleManualRefresh}
+                variant="outline"
+                size="sm"
+                className="border-yellow-500 text-yellow-400 hover:bg-yellow-500 hover:text-black bg-transparent"
+              >
+                <RefreshCw className="h-4 w-4 mr-1" />
+                Refresh Now
+              </Button>
             </div>
           </div>
 
@@ -139,97 +204,18 @@ export default function ProductionBiddingTable({ currentUser = "user1" }: Produc
               </h3>
             </div>
 
-            {/* Main content: Image on left, Tables list on right */}
+            {/* Main content: Dynamic Seating Chart on left, Tables list on right */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-              {/* Image on the left */}
+              {/* Dynamic Seating Chart on the left */}
               <div className="relative">
-                <div className="relative w-full h-[500px] md:h-[600px] rounded-lg overflow-hidden shadow-2xl shadow-yellow-500/20">
-                  <Image
-                    src="/images/seating-chart-black.png"
-                    alt="King of Good Times Seating Chart"
-                    fill
-                    className="object-contain"
-                    quality={100}
-                  />
-
-                  {/* Hover areas positioned accurately over each table */}
-                  {tables.map((table) => {
-                    let position = { top: "50%", left: "50%", width: "8%", height: "6%" }
-
-                    // Accurate positioning based on the seating chart layout
-                    switch (table.id) {
-                      case "50":
-                        position = { top: "8%", left: "8%", width: "12%", height: "8%" }
-                        break
-                      case "51":
-                        position = { top: "8%", left: "25%", width: "12%", height: "8%" }
-                        break
-                      case "52":
-                        position = { top: "8%", left: "63%", width: "12%", height: "8%" }
-                        break
-                      case "53":
-                        position = { top: "8%", left: "80%", width: "12%", height: "8%" }
-                        break
-                      case "43/44":
-                        position = { top: "25%", left: "2%", width: "15%", height: "10%" }
-                        break
-                      case "82":
-                        position = { top: "32%", left: "22%", width: "10%", height: "8%" }
-                        break
-                      case "72":
-                        position = { top: "32%", left: "68%", width: "10%", height: "8%" }
-                        break
-                      case "41":
-                        position = { top: "45%", left: "5%", width: "8%", height: "6%" }
-                        break
-                      case "81":
-                        position = { top: "52%", left: "18%", width: "12%", height: "8%" }
-                        break
-                      case "71":
-                        position = { top: "52%", left: "70%", width: "12%", height: "8%" }
-                        break
-                      case "62":
-                        position = { top: "45%", left: "87%", width: "8%", height: "6%" }
-                        break
-                      case "40":
-                        position = { top: "65%", left: "5%", width: "8%", height: "6%" }
-                        break
-                      case "80":
-                        position = { top: "72%", left: "18%", width: "12%", height: "8%" }
-                        break
-                      case "70":
-                        position = { top: "72%", left: "70%", width: "12%", height: "8%" }
-                        break
-                      case "63":
-                        position = { top: "58%", left: "87%", width: "8%", height: "6%" }
-                        break
-                      case "64":
-                        position = { top: "71%", left: "87%", width: "8%", height: "6%" }
-                        break
-                    }
-
-                    return (
-                      <div
-                        key={table.id}
-                        className="absolute cursor-pointer z-10"
-                        style={position}
-                        onMouseEnter={() => setHoveredTable(table.id)}
-                        onMouseLeave={() => setHoveredTable(null)}
-                      >
-                        {hoveredTable === table.id && (
-                          <div className="absolute z-20 bg-black/95 text-yellow-400 px-3 py-2 rounded-lg text-sm whitespace-nowrap border border-yellow-500/50 shadow-xl -top-14 left-1/2 transform -translate-x-1/2">
-                            <div className="font-bold text-center text-yellow-300">Table {table.id}</div>
-                            <div className="font-bold text-center">₹{table.current_bid.toLocaleString()}</div>
-                            <div className="text-yellow-300 text-xs text-center">
-                              {table.highest_bidder_username || "No bidder"}
-                            </div>
-                            <div className="absolute top-full left-1/2 transform -translate-x-1/2 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-yellow-500/50"></div>
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })}
-                </div>
+                <DynamicSeatingChart
+                  tables={tables}
+                  hoveredTable={hoveredTable}
+                  selectedTable={selectedTable}
+                  onTableHover={setHoveredTable}
+                  onTableSelect={setSelectedTable}
+                  currentUser={currentUser}
+                />
               </div>
 
               {/* Available Tables section on the right */}
@@ -237,78 +223,105 @@ export default function ProductionBiddingTable({ currentUser = "user1" }: Produc
                 <Card className="bg-card-overlay border-black-charcoal">
                   <CardHeader>
                     <CardTitle className="text-platinum-gradient flex items-center gap-2">
-                      Available Tables
+                      Available Tables ({tables.length})
                       <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="max-h-[500px] overflow-y-auto space-y-3">
-                    {tables.map((table) => (
-                      <div
-                        key={table.id}
-                        className={`p-3 rounded-lg border transition-all cursor-pointer ${
-                          selectedTable === table.id
-                            ? "border-yellow-500 bg-yellow-500/10"
-                            : "border-black-charcoal bg-background hover:border-yellow-500/50"
-                        }`}
-                        onClick={() => setSelectedTable(table.id)}
-                      >
-                        <div className="flex justify-between items-start mb-2">
-                          <div>
-                            <h4 className="font-semibold text-foreground">{table.name}</h4>
-                            <p className="text-sm text-muted-foreground">{table.pax} PAX</p>
-                          </div>
-                          <Badge className={`${getCategoryColor(table.category)} text-white`}>{table.category}</Badge>
-                        </div>
-                        <div className="flex justify-between items-center">
-                          <div>
-                            <p className="text-sm text-muted-foreground">Current Bid:</p>
-                            <p className="font-bold text-yellow-400">₹{table.current_bid.toLocaleString()}</p>
-                            <p className="text-xs text-muted-foreground">
-                              by {table.highest_bidder_username || "No bidder"}
-                            </p>
-                          </div>
-                        </div>
+                    {tables.map((table) => {
+                      const minimumBid = table.current_bid + 1000
+                      const isUserWinning = table.highest_bidder_username === currentUser
 
-                        {selectedTable === table.id && (
-                          <div className="mt-3 space-y-2 border-t border-yellow-500/20 pt-3">
-                            <Label htmlFor={`bid-${table.id}`} className="text-sm text-foreground">
-                              Enter Your Bid (Min: ₹{(table.current_bid + 1000).toLocaleString()})
-                            </Label>
-                            <div className="flex gap-2">
-                              <Input
-                                id={`bid-${table.id}`}
-                                type="number"
-                                placeholder={`${table.current_bid + 1000}`}
-                                value={customBid}
-                                onChange={(e) => setCustomBid(e.target.value)}
-                                className="bg-background border-yellow-500/50 text-foreground"
-                                min={table.current_bid + 1000}
-                                step="1000"
-                                disabled={isPlacingBid}
-                              />
-                              <Button
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  handlePlaceBid(table.id)
-                                }}
-                                className="bg-yellow-500 hover:bg-yellow-600 text-black whitespace-nowrap"
-                                disabled={!customBid || isPlacingBid}
-                              >
-                                {isPlacingBid ? (
-                                  <>
-                                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                                    Placing...
-                                  </>
-                                ) : (
-                                  "Place Bid"
-                                )}
-                              </Button>
+                      return (
+                        <div
+                          key={table.id}
+                          className={`p-3 rounded-lg border transition-all cursor-pointer ${
+                            selectedTable === table.id
+                              ? "border-yellow-500 bg-yellow-500/10"
+                              : "border-black-charcoal bg-background hover:border-yellow-500/50"
+                          } ${isUserWinning ? "ring-2 ring-green-400" : ""}`}
+                          onClick={() => setSelectedTable(table.id)}
+                        >
+                          <div className="flex justify-between items-start mb-2">
+                            <div>
+                              <h4 className="font-semibold text-foreground">{table.name}</h4>
+                              <p className="text-sm text-muted-foreground">{table.pax} PAX</p>
                             </div>
-                            {bidError && <p className="text-red-400 text-xs">{bidError}</p>}
+                            <Badge className={`${getCategoryColor(table.category)} text-white`}>{table.category}</Badge>
                           </div>
-                        )}
-                      </div>
-                    ))}
+                          <div className="flex justify-between items-center">
+                            <div>
+                              <p className="text-sm text-muted-foreground">Current Highest Bid:</p>
+                              <p className="font-bold text-yellow-400 text-lg">₹{table.current_bid.toLocaleString()}</p>
+                              <p className="text-xs text-muted-foreground">
+                                by {table.highest_bidder_username || "No bidder"}
+                              </p>
+                              <p className="text-xs text-green-400">Min. next bid: ₹{minimumBid.toLocaleString()}</p>
+                              <p className="text-xs text-gray-400">
+                                Updated: {new Date(table.updated_at || Date.now()).toLocaleTimeString()}
+                              </p>
+                            </div>
+                            {isUserWinning && (
+                              <div className="text-green-400 text-xs font-bold bg-green-400/20 px-2 py-1 rounded">
+                                🏆 YOU'RE WINNING!
+                              </div>
+                            )}
+                          </div>
+
+                          {selectedTable === table.id && (
+                            <div className="mt-3 space-y-2 border-t border-yellow-500/20 pt-3">
+                              <Label htmlFor={`bid-${table.id}`} className="text-sm text-foreground">
+                                Enter Your Custom Bid (Min: ₹{minimumBid.toLocaleString()})
+                              </Label>
+                              <div className="flex gap-2">
+                                <Input
+                                  id={`bid-${table.id}`}
+                                  type="number"
+                                  placeholder={`Enter amount (min ${minimumBid})`}
+                                  value={customBid}
+                                  onChange={(e) => {
+                                    setCustomBid(e.target.value)
+                                    setBidError("") // Clear error when user types
+                                  }}
+                                  className="bg-background border-yellow-500/50 text-foreground"
+                                  min={minimumBid}
+                                  step="100" // Allow smaller increments for custom bids
+                                  disabled={isPlacingBid || isUserWinning}
+                                />
+                                <Button
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    handlePlaceBid(table.id)
+                                  }}
+                                  className="bg-yellow-500 hover:bg-yellow-600 text-black whitespace-nowrap"
+                                  disabled={!customBid || isPlacingBid || isUserWinning}
+                                >
+                                  {isPlacingBid ? (
+                                    <>
+                                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                                      Placing...
+                                    </>
+                                  ) : isUserWinning ? (
+                                    "You're Winning!"
+                                  ) : (
+                                    "Place Bid"
+                                  )}
+                                </Button>
+                              </div>
+                              {bidError && <p className="text-red-400 text-xs">{bidError}</p>}
+                              {isUserWinning && (
+                                <p className="text-green-400 text-xs">
+                                  You have the highest bid on this table. Wait for others to bid higher.
+                                </p>
+                              )}
+                              <div className="text-xs text-gray-400 mt-1">
+                                💡 You can bid any amount above ₹{minimumBid.toLocaleString()}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
                   </CardContent>
                 </Card>
               </div>
@@ -318,7 +331,7 @@ export default function ProductionBiddingTable({ currentUser = "user1" }: Produc
             <Card className="bg-card-overlay border-black-charcoal">
               <CardHeader>
                 <CardTitle className="text-platinum-gradient flex items-center gap-2">
-                  Live Bidding Activity
+                  Live Bidding Activity ({recentBids.length})
                   <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
                 </CardTitle>
               </CardHeader>
@@ -327,7 +340,10 @@ export default function ProductionBiddingTable({ currentUser = "user1" }: Produc
                   {recentBids.map((bid, index) => (
                     <div key={bid.id || index} className="flex justify-between items-center text-sm">
                       <span className="text-foreground">
-                        <strong>{bid.username}</strong> bid on <strong>Table {bid.table_id}</strong>
+                        <strong className={bid.username === currentUser ? "text-green-400" : ""}>
+                          {bid.username === currentUser ? "You" : bid.username}
+                        </strong>{" "}
+                        bid on <strong>Table {bid.table_id}</strong>
                       </span>
                       <div className="text-right">
                         <span className="text-yellow-400 font-bold">₹{bid.bid_amount.toLocaleString()}</span>
